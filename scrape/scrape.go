@@ -9,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-kit/kit/log"
+
+	"time"
+
 	"github.com/dewey/go-radiooooo/radiooooo"
 	"github.com/dewey/go-radiooooo/store"
 )
@@ -18,6 +22,7 @@ type API struct {
 	Endpoint string
 	Client   *http.Client
 	Storage  *store.Archive
+	Log      log.Logger
 }
 
 // Country contains a country as defined by the Radiooooo API
@@ -35,6 +40,11 @@ type QueryPayload struct {
 
 // CountriesInDecade contains all countries in a given decade
 type CountriesInDecade map[string][]string
+
+// getAllMoods contains all available moods
+func (a *API) getAllMoods() []string {
+	return []string{"SLOW", "FAST", "WEIRD"}
+}
 
 // getAllCountriesByDecade returns a list of all countries that are available in one decade
 func (a *API) getAllCountriesByDecade(decade int, moods []string) (CountriesInDecade, error) {
@@ -109,8 +119,20 @@ func (a *API) getAllTracks(playlist *radiooooo.Playlist, decade int, country str
 			return nil, err
 		}
 		defer resp.Body.Close()
-		var sr radiooooo.SongResponse
 
+		// Reset buffer to unread
+		// respBody, _ := ioutil.ReadAll(resp.Body)
+		// resp.Body = ioutil.NopCloser(bytes.NewBuffer(respBody))
+		// fmt.Println(string(respBody))
+
+		// Sometimes the server replies with a 500 and a java.lang.NullPointerException, we then give the server
+		//  some time to recover
+		if resp.StatusCode != 200 {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+
+		var sr radiooooo.SongResponse
 		if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
 			return nil, err
 		}
@@ -119,7 +141,8 @@ func (a *API) getAllTracks(playlist *radiooooo.Playlist, decade int, country str
 			seen[sr.Song.UUID] = 0
 			songs = append(songs, sr.Song)
 		}
-		// TODO: Each song should have a counter, if we have seen everything twice we assume we scraped everything and continue to the next search query, right now it's just a retry for 3 times
+		// TODO: Each song should have a counter, if we have seen everything twice we assume we scraped everything
+		// and continue to the next search query, right now it's just a retry for 3 times
 		retry++
 		if retry > 3 {
 			return songs, nil
@@ -130,18 +153,15 @@ func (a *API) getAllTracks(playlist *radiooooo.Playlist, decade int, country str
 // Start will start a full scrape
 func (a *API) Start() (bool, error) {
 	// We have to create a playlist for future requests, we just use a random country from our list for that request
-	pl, err := a.createNewPlaylist(1900, "UZB", []string{"SLOW", "FAST", "WEIRD"})
+	pl, err := a.createNewPlaylist(1900, "UZB", a.getAllMoods())
 	if err != nil {
 		return false, err
 	}
-	fmt.Printf("%#v\n", pl)
-
 	for _, d := range []int{1990} {
-		countries, err := a.getAllCountriesByDecade(d, []string{"SLOW", "FAST", "WEIRD"})
+		countries, err := a.getAllCountriesByDecade(d, a.getAllMoods())
 		if err != nil {
 			return false, err
 		}
-		fmt.Printf("%#v\n", countries)
 		for _, c := range countries[strconv.Itoa(d)] {
 			var err error
 			err = a.Storage.WriteCountry(c)
@@ -161,10 +181,8 @@ func (a *API) Start() (bool, error) {
 				if err != nil {
 					return false, err
 				}
-				fmt.Println(i.ID)
 			}
 		}
 	}
-
 	return true, nil
 }
