@@ -84,32 +84,40 @@ func (a *Archive) WriteSong(country string, year int, s radiooooo.Song) error {
 
 // writeSongDetails downloads the assets and stores the meta data along side the audio files
 func writeSongFile(parentPath string, s radiooooo.Song) error {
-	out, err := os.Create(path.Join(parentPath, s.UUID) + ".mp3")
-	if err != nil {
-		return err
+	path := path.Join(parentPath, s.UUID) + ".mp3"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		out, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		resp, err := http.Get(s.Mp3)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if _, err = io.Copy(out, resp.Body); err != nil {
+			return err
+		}
 	}
-	defer out.Close()
-	resp, err := http.Get(s.Mp3)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if _, err = io.Copy(out, resp.Body); err != nil {
-		return err
-	}
+
 	if err := writeSongMetadata(parentPath, s); err != nil {
 		return err
 	}
 	return nil
 }
 
+// writeSongMetadata downloads the raw JSON response and stores it alongside the audio files
 func writeSongMetadata(parentPath string, s radiooooo.Song) error {
-	md, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	if err := ioutil.WriteFile(path.Join(parentPath, s.UUID)+".json", md, 0644); err != nil {
-		return err
+	path := path.Join(parentPath, s.UUID) + ".json"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		md, err := json.Marshal(s)
+		if err != nil {
+			return err
+		}
+		if err := ioutil.WriteFile(path, md, 0644); err != nil {
+			return err
+		}
 	}
 	return nil
 }
